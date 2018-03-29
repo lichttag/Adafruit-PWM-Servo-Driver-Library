@@ -28,9 +28,8 @@
     @param  addr The 7-bit I2C address to locate this chip, default is 0x40
 */
 /**************************************************************************/
-Adafruit_PWMServoDriver::Adafruit_PWMServoDriver(uint8_t addr) {
-  _i2caddr = addr;
-
+Adafruit_PWMServoDriver::Adafruit_PWMServoDriver() {
+  _twiIsInitialized = false;
 #if defined(ARDUINO_SAM_DUE)
   _i2c = &Wire1;
 #else
@@ -45,9 +44,9 @@ Adafruit_PWMServoDriver::Adafruit_PWMServoDriver(uint8_t addr) {
     @param  addr The 7-bit I2C address to locate this chip, default is 0x40
 */
 /**************************************************************************/
-Adafruit_PWMServoDriver::Adafruit_PWMServoDriver(TwoWire *i2c, uint8_t addr) {
+Adafruit_PWMServoDriver::Adafruit_PWMServoDriver(TwoWire *i2c) {
   _i2c = i2c;
-  _i2caddr = addr;
+  _twiIsInitialized = false;
 }
 
 /**************************************************************************/
@@ -55,11 +54,14 @@ Adafruit_PWMServoDriver::Adafruit_PWMServoDriver(TwoWire *i2c, uint8_t addr) {
     @brief  Setups the I2C interface and hardware
 */
 /**************************************************************************/
-void Adafruit_PWMServoDriver::begin(void) {
-  _i2c->begin();
-  reset();
+void Adafruit_PWMServoDriver::begin(uint8_t i2cAddr) {
+  if (!_twiIsInitialized){
+    _i2c->begin();
+    _twiIsInitialized = true;
+  }
+  reset(i2cAddr);
   // set a default frequency
-  setPWMFreq(1000);
+  setPWMFreq(i2cAddr, 1000);
 }
 
 
@@ -68,8 +70,8 @@ void Adafruit_PWMServoDriver::begin(void) {
     @brief  Sends a reset command to the PCA9685 chip over I2C
 */
 /**************************************************************************/
-void Adafruit_PWMServoDriver::reset(void) {
-  write8(PCA9685_MODE1, 0x80);
+void Adafruit_PWMServoDriver::reset(uint8_t i2cAddr) {
+  write8(i2cAddr, PCA9685_MODE1, 0x80);
   delay(10);
 }
 
@@ -79,7 +81,7 @@ void Adafruit_PWMServoDriver::reset(void) {
     @param  freq Floating point frequency that we will attempt to match
 */
 /**************************************************************************/
-void Adafruit_PWMServoDriver::setPWMFreq(float freq) {
+void Adafruit_PWMServoDriver::setPWMFreq(uint8_t i2cAddr, float freq) {
 #ifdef ENABLE_DEBUG_OUTPUT
   Serial.print("Attempting to set freq ");
   Serial.println(freq);
@@ -100,13 +102,13 @@ void Adafruit_PWMServoDriver::setPWMFreq(float freq) {
   Serial.print("Final pre-scale: "); Serial.println(prescale);
 #endif
   
-  uint8_t oldmode = read8(PCA9685_MODE1);
+  uint8_t oldmode = read8(i2cAddr, PCA9685_MODE1);
   uint8_t newmode = (oldmode&0x7F) | 0x10; // sleep
-  write8(PCA9685_MODE1, newmode); // go to sleep
-  write8(PCA9685_PRESCALE, prescale); // set the prescaler
-  write8(PCA9685_MODE1, oldmode);
+  write8(i2cAddr, PCA9685_MODE1, newmode); // go to sleep
+  write8(i2cAddr, PCA9685_PRESCALE, prescale); // set the prescaler
+  write8(i2cAddr, PCA9685_MODE1, oldmode);
   delay(5);
-  write8(PCA9685_MODE1, oldmode | 0xa0);  //  This sets the MODE1 register to turn on auto increment.
+  write8(i2cAddr, PCA9685_MODE1, oldmode | 0xa0);  //  This sets the MODE1 register to turn on auto increment.
 
 #ifdef ENABLE_DEBUG_OUTPUT
   Serial.print("Mode now 0x"); Serial.println(read8(PCA9685_MODE1), HEX);
@@ -121,12 +123,12 @@ void Adafruit_PWMServoDriver::setPWMFreq(float freq) {
     @param  off At what point in the 4096-part cycle to turn the PWM output OFF
 */
 /**************************************************************************/
-void Adafruit_PWMServoDriver::setPWM(uint8_t num, uint16_t on, uint16_t off) {
+void Adafruit_PWMServoDriver::setPWM(uint8_t i2cAddr, uint8_t num, uint16_t on, uint16_t off) {
 #ifdef ENABLE_DEBUG_OUTPUT
   Serial.print("Setting PWM "); Serial.print(num); Serial.print(": "); Serial.print(on); Serial.print("->"); Serial.println(off);
 #endif
 
-  _i2c->beginTransmission(_i2caddr);
+  _i2c->beginTransmission(i2cAddr);
   _i2c->write(LED0_ON_L+4*num);
   _i2c->write(on);
   _i2c->write(on>>8);
@@ -143,51 +145,51 @@ void Adafruit_PWMServoDriver::setPWM(uint8_t num, uint16_t on, uint16_t off) {
     @param  invert If true, inverts the output, defaults to 'false'
 */
 /**************************************************************************/
-void Adafruit_PWMServoDriver::setPin(uint8_t num, uint16_t val, bool invert)
+void Adafruit_PWMServoDriver::setPin(uint8_t i2cAddr, uint8_t num, uint16_t val, bool invert)
 {
   // Clamp value between 0 and 4095 inclusive.
   val = min(val, (uint16_t)4095);
   if (invert) {
     if (val == 0) {
       // Special value for signal fully on.
-      setPWM(num, 4096, 0);
+      setPWM(i2cAddr, num, 4096, 0);
     }
     else if (val == 4095) {
       // Special value for signal fully off.
-      setPWM(num, 0, 4096);
+      setPWM(i2cAddr, num, 0, 4096);
     }
     else {
-      setPWM(num, 0, 4095-val);
+      setPWM(i2cAddr, num, 0, 4095-val);
     }
   }
   else {
     if (val == 4095) {
       // Special value for signal fully on.
-      setPWM(num, 4096, 0);
+      setPWM(i2cAddr, num, 4096, 0);
     }
     else if (val == 0) {
       // Special value for signal fully off.
-      setPWM(num, 0, 4096);
+      setPWM(i2cAddr, num, 0, 4096);
     }
     else {
-      setPWM(num, 0, val);
+      setPWM(i2cAddr, num, 0, val);
     }
   }
 }
 
 /*******************************************************************************************/
 
-uint8_t Adafruit_PWMServoDriver::read8(uint8_t addr) {
-  _i2c->beginTransmission(_i2caddr);
+uint8_t Adafruit_PWMServoDriver::read8(uint8_t i2cAddr, uint8_t addr) {
+  _i2c->beginTransmission(i2cAddr);
   _i2c->write(addr);
   _i2c->endTransmission();
 
-  _i2c->requestFrom((uint8_t)_i2caddr, (uint8_t)1);
+  _i2c->requestFrom((uint8_t)i2cAddr, (uint8_t)1);
   return _i2c->read();
 }
 
-void Adafruit_PWMServoDriver::write8(uint8_t addr, uint8_t d) {
-  _i2c->beginTransmission(_i2caddr);
+void Adafruit_PWMServoDriver::write8(uint8_t i2cAddr, uint8_t addr, uint8_t d) {
+  _i2c->beginTransmission(i2cAddr);
   _i2c->write(addr);
   _i2c->write(d);
   _i2c->endTransmission();
